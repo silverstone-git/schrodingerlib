@@ -18,6 +18,6 @@ class Polynomial {
     std::vector<float> coeffs;
 };
 
-std::vector<float> bisection(const Polynomial& p);
+std::vector<float> bisection(const Polynomial& p, float tolerance = 0.0001f);
 
 #endif

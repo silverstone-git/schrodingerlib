@@ -37,9 +37,11 @@ int main() {
 
   Polynomial p = Polynomial(polyn);
   p.print();
-  std::cout << p.eval(1) << std::endl;
-  std::cout << p.eval(2) << std::endl;
+  // std::cout << p.eval(1) << std::endl;
+  // std::cout << p.eval(2) << std::endl;
 
   std::vector<float> res = bisection(p);
+  for(const auto& root : res) std::cout << std::to_string(root) << ", ";
+  std::cout << std::endl;
   return 0;
 }

@@ -9,13 +9,16 @@
 #include <vector>
 
 Polynomial::Polynomial(std::vector<float> coeffsin) {
+  if (coeffsin.empty()) {
+    this->coeffs = {0.0f};
+    return;
+  }
   // removing leading 0s
-  while (coeffsin[0] == 0.0f && coeffsin.size() > 1) {
+  while (coeffsin.size() > 1 && coeffsin[0] == 0.0f) {
     coeffsin.erase(coeffsin.begin());
   }
   this->coeffs = coeffsin;
-
-};
+}
 
 void Polynomial::print() const {
 
@@ -85,27 +88,90 @@ auto Polynomial::roots() const -> std::vector<float> {
     }
   }
 
+  // TODO: to be implemented
+
   return roots;
 }
 
 
-std::vector<float> bisection(const Polynomial& p) {
-  const int cauchy_bounds = p.cauchy_bounds();
-  int left = -cauchy_bounds;
-  int right = cauchy_bounds;
+std::vector<float> bisection(const Polynomial& p, float tolerance) {
+  std::vector<float> roots = {};
+  const float cb = p.cauchy_bounds();
+  int degree = p.size() - 1;
+  
+  std::cout << "cauchy bound is: " << cb << std::endl;
 
-  // while ()
-  std::vector<float> roots = {1.0f};
+  // We will scan the interval [-cb, cb] in small steps to find sign changes
+  int num_steps = 1000;
+  float step_size = (2.0f * cb) / num_steps;
+  
+  float current_x = -cb;
+  float current_y = p.eval(current_x);
+  
+  for (int i = 0; i < num_steps; ++i) {
+    if (roots.size() == degree) break; // We found all possible real roots
+
+    float next_x = current_x + step_size;
+    float next_y = p.eval(next_x);
+    
+    // Check if a root is exactly at current_x
+    if (std::abs(current_y) < tolerance) {
+      if (roots.empty() || std::abs(roots.back() - current_x) > tolerance) {
+        roots.push_back(current_x);
+      }
+    } 
+    // Check for a sign change indicating a root between current_x and next_x
+    else if (std::signbit(current_y) != std::signbit(next_y)) {
+      float left = current_x;
+      float right = next_x;
+      float f_left = current_y;
+      
+      // Perform bisection in this sub-interval
+      while (std::abs(right - left) > tolerance) {
+        float mpt = (left + right) / 2.0f;
+        float f_mpt = p.eval(mpt);
+
+        if (std::abs(f_mpt) < tolerance) {
+          left = mpt;
+          right = mpt;
+          break;
+        }
+
+        if (std::signbit(f_left) != std::signbit(f_mpt)) {
+          right = mpt;
+        } else {
+          left = mpt;
+          f_left = f_mpt;
+        }
+      }
+      roots.push_back((left + right) / 2.0f);
+    }
+    
+    current_x = next_x;
+    current_y = next_y;
+  }
+  
+  // Check the final endpoint
+  if (roots.size() < degree && std::abs(current_y) < tolerance) {
+    if (roots.empty() || std::abs(roots.back() - current_x) > tolerance) {
+      roots.push_back(current_x);
+    }
+  }
+
+  if (roots.empty()) {
+    std::cout << "a double root situation (y=x^2 kinda thing) , or, no-root situation" << std::endl;
+  }
+
   return roots;
 }
 
 
 float Polynomial::eval(float x) const {
-  // evalutes the polynomial at a given point
-  int res = 0;
-  for(int i = 0; i < this->size() - 1; i ++) {
-    res += *coeff_at(i) * pow(x, this->size() - i - 1);
+  // evaluates the polynomial at a given point using Horner's method
+  if (this->size() == 0) return 0.0f;
+  float res = *this->coeff_at(0);
+  for (int i = 1; i < this->size(); i++) {
+    res = res * x + *this->coeff_at(i);
   }
-  res += *this->coeff_at(this->size() - 1);
   return res;
 }
