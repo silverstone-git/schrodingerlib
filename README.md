@@ -7,3 +7,12 @@ Physical Functions, implemented in python
 cd numerical_analysis/
 make -C build && ./build/runme
 ```
+
+
+## Main project run
+
+```
+export VCPKG_ROOT=/path/to/vcpkg
+cmake --preset default
+cmake --build build
+```

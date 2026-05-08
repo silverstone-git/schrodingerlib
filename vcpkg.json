@@ -1,0 +1,7 @@
+{
+  "name": "schrodingerlib",
+  "version": "1.2",
+  "dependencies": [
+    "matplotplusplus"
+  ]
+}
