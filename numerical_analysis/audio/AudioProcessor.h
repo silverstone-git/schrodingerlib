@@ -6,11 +6,11 @@
 
 class AudioProcessor {
 public:
-    static std::vector<double> readWav(const std::string& filename, int& sampleRate);
-    static void writeWav(const std::string& filename, const std::vector<double>& samples, int sampleRate);
+    static std::vector<double> readWav(const std::string& filename, int& sample_rate_hz);
+    static void writeWav(const std::string& filename, const std::vector<double>& pcm_samples, int sample_rate_hz);
     
     // Uses ROOT's TVirtualFFT
-    static std::vector<double> filter(const std::vector<double>& samples, int sampleRate, double freq_lo, double freq_hi);
+    static std::vector<double> filter(const std::vector<double>& pcm_samples, int sample_rate_hz, double freq_lo_hz, double freq_hi_hz);
 };
 
 #endif

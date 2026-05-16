@@ -19,6 +19,8 @@ add_executable(runme
     main.cpp 
     polynomial/Polynomial.cpp
     integration/Leapfrog.cpp
+    integration/Environment.cpp
+    integration/Rocket.cpp
     heat/HeatEquation.cpp
     audio/AudioProcessor.cpp
 )

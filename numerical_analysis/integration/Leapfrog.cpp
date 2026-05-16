@@ -1,148 +1,87 @@
 #include "Leapfrog.h"
 #include <cmath>
-#include <array>
 #include <algorithm>
 #include <TGraph.h>
 #include <TCanvas.h>
+#include <TMath.h>
 
-LeapfrogIntegrator::LeapfrogIntegrator(double dt, double initial_mass)
-    : dt(dt), current_mass(initial_mass) {}
+LeapfrogIntegrator::LeapfrogIntegrator(IEnvironment* env, IRocket* rocket, double dt_s)
+    : env(env), rocket(rocket), dt_s(dt_s) {}
 
-double LeapfrogIntegrator::get_ambient_pressure(double geometric_altitude_m, double earth_radius) const {
-    double h = (earth_radius * geometric_altitude_m) / (earth_radius + geometric_altitude_m);
-
-    if (h < 0.0) return 101325.0; 
-    if (h > 86000.0) return 0.0;  
-
-    struct AtmosphericLayer {
-        double base_h;
-        double base_P;
-        double base_T;
-        double lapse_L;
-    };
-
-    static const std::array<AtmosphericLayer, 7> layers = {{
-        {0.0,     101325.0,   288.15, -0.0065}, 
-        {11000.0, 22632.1,    216.65,  0.0000}, 
-        {20000.0, 5474.89,    216.65,  0.0010}, 
-        {32000.0, 868.019,    228.65,  0.0028}, 
-        {47000.0, 110.906,    270.65,  0.0000}, 
-        {51000.0, 66.9389,    270.65, -0.0028}, 
-        {71000.0, 3.95642,    214.65, -0.0020}  
-    }};
-
-    auto it = std::upper_bound(layers.begin(), layers.end(), h, 
-        [](double val, const AtmosphericLayer& layer) { return val < layer.base_h; });
-    
-    const auto& layer = *(std::prev(it));
-
-    constexpr double g0 = 9.80665;
-    constexpr double M  = 0.0289644;
-    constexpr double R  = 8.31432;
-
-    double delta_h = h - layer.base_h;
-
-    if (std::abs(layer.lapse_L) < 1e-9) {
-        return layer.base_P * std::exp((-g0 * M * delta_h) / (R * layer.base_T));
-    } else {
-        double T_local = layer.base_T + layer.lapse_L * delta_h;
-        double exponent = (-g0 * M) / (R * layer.lapse_L);
-        return layer.base_P * std::pow(T_local / layer.base_T, exponent);
-    }
-}
-
-void LeapfrogIntegrator::get_lvm3_stage_properties(double altitude_m, double& mass_flow_rate, double& exit_velocity, double& exit_pa, double& nozzle_exit_area) {
-    if (altitude_m < 43000.0) {
-        mass_flow_rate   = 5460.0;
-        exit_velocity    = 2690.0;
-        exit_pa          = 60000.0;
-        nozzle_exit_area = 11.2;
-    }
-    else if (altitude_m >= 43000.0 && altitude_m < 60000.0) {
-        mass_flow_rate   = 6031.4;
-        exit_velocity    = 2710.0;
-        exit_pa          = 52000.0;
-        nozzle_exit_area = 12.862;
-    }
-    else if (altitude_m >= 60000.0 && altitude_m < 175000.0) {
-        if (!s200_jettisoned) {
-            current_mass -= 62000.0;
-            s200_jettisoned = true;
-        }
-        mass_flow_rate   = 571.4;
-        exit_velocity    = 2873.0;
-        exit_pa          = 52000.0;
-        nozzle_exit_area = 1.662;
-    }
-    else {
-        if (!l110_jettisoned) {
-            current_mass -= 105000.0;
-            l110_jettisoned = true;
-        }
-        mass_flow_rate   = 44.5;
-        exit_velocity    = 4345.0;
-        exit_pa          = 5000.0;
-        nozzle_exit_area = 2.45;
-    }
-}
-
-std::vector<State> LeapfrogIntegrator::simulate(double t_max, double initial_x, double initial_v) {
+std::vector<State> LeapfrogIntegrator::simulate(double t_max_s, double initial_altitude_m, double initial_velocity_m_s) {
     std::vector<State> results;
-    double t = 0.0;
-    double x = initial_x;
-    double v = initial_v;
-    double a = 0.0;
+    double t_s = 0.0;
     
-    const double G = 6.67e-11;
-    const double M = 5.9722e24;
-    const double R = 6378100.0;
-    double g = (G * M) / (R * R);
+    // Absolute position from center of planet
+    double x_m = initial_altitude_m + env->get_radius_m();
+    double v_m_s = initial_velocity_m_s;
+    double a_m_s2 = 0.0;
     
-    double mass_flow_rate, exit_velocity, exit_pa, nozzle_exit_area;
-    get_lvm3_stage_properties(0.0, mass_flow_rate, exit_velocity, exit_pa, nozzle_exit_area);
-    double atm = get_ambient_pressure(0.0, R);
+    // Initial Environment conditions
+    double current_alt_m = x_m - env->get_radius_m();
+    double g_m_s2 = env->get_gravity_m_s2(current_alt_m);
+    double atm_pa = env->get_pressure_pa(current_alt_m);
+    double rho_kg_m3 = env->get_density_kg_m3(current_alt_m);
+    double sos_m_s = env->get_speed_of_sound_m_s(current_alt_m);
     
-    double thrust = (mass_flow_rate * exit_velocity) + (exit_pa - atm) * nozzle_exit_area;
-    double thrust_accn = thrust / current_mass;
+    // Init rocket
+    rocket->update_dt(0.0, current_alt_m, v_m_s);
+    double thrust_n = rocket->get_thrust_n(atm_pa);
+    double thrust_accn_m_s2 = thrust_n / rocket->get_mass_kg();
     
-    if (thrust_accn > g) {
-        a = thrust_accn - g;
+    if (thrust_accn_m_s2 > g_m_s2) {
+        a_m_s2 = thrust_accn_m_s2 - g_m_s2;
     } else {
-        a = 0.0;
+        a_m_s2 = 0.0;
     }
     
-    results.push_back({t, x, v, a, atm});
+    results.push_back({t_s, current_alt_m, v_m_s, a_m_s2, atm_pa, rocket->get_mass_kg(), thrust_n, 0.0, 0.0, 0.0});
     
-    double v_half = v + a * (dt / 2.0);
+    double v_half_m_s = v_m_s + a_m_s2 * (dt_s / 2.0);
     
-    while (t < t_max) {
-        x = x + v_half * dt;
-        if (x <= R) {
-            x = R;
-            v_half = 0.0;
+    while (t_s < t_max_s) {
+        x_m += v_half_m_s * dt_s;
+        if (x_m <= env->get_radius_m()) {
+            x_m = env->get_radius_m();
+            v_half_m_s = 0.0;
         }
         
-        g = (G * M) / (x * x);
-        atm = get_ambient_pressure(x - R, R);
-        get_lvm3_stage_properties(x - R, mass_flow_rate, exit_velocity, exit_pa, nozzle_exit_area);
+        current_alt_m = x_m - env->get_radius_m();
         
-        current_mass = current_mass - mass_flow_rate * dt;
+        // Update environment
+        g_m_s2 = env->get_gravity_m_s2(current_alt_m);
+        atm_pa = env->get_pressure_pa(current_alt_m);
+        rho_kg_m3 = env->get_density_kg_m3(current_alt_m);
+        sos_m_s = env->get_speed_of_sound_m_s(current_alt_m);
         
-        thrust = (mass_flow_rate * exit_velocity) + (exit_pa - atm) * nozzle_exit_area;
-        thrust_accn = thrust / current_mass;
+        // Update rocket
+        rocket->update_dt(dt_s, current_alt_m, v_half_m_s);
+        thrust_n = rocket->get_thrust_n(atm_pa);
+        thrust_accn_m_s2 = thrust_n / rocket->get_mass_kg();
         
-        if (thrust_accn <= g && (x - R) <= 1e-3) {
-            a = 0.0;
-            v_half = 0.0;
-            v = 0.0;
+        // Aerodynamics
+        double mach = rocket->get_mach(sos_m_s, v_half_m_s);
+        double drag_n = rocket->get_drag_force_n(rho_kg_m3, sos_m_s, v_half_m_s);
+        double q_pa = 0.5 * rho_kg_m3 * v_half_m_s * v_half_m_s;
+
+        // Kinematics
+        if (thrust_accn_m_s2 <= g_m_s2 && current_alt_m <= 1e-3) {
+            a_m_s2 = 0.0;
+            v_half_m_s = 0.0;
+            v_m_s = 0.0;
         } else {
-            a = thrust_accn - g;
-            v_half = v_half + a * dt;
-            v = v_half - a * (dt / 2.0);
+            a_m_s2 = thrust_accn_m_s2 - g_m_s2;
+            double drag_accn_m_s2 = drag_n / rocket->get_mass_kg();
+            
+            if (v_half_m_s > 0) a_m_s2 -= drag_accn_m_s2;
+            else a_m_s2 += drag_accn_m_s2;
+
+            v_half_m_s += a_m_s2 * dt_s;
+            v_m_s = v_half_m_s - a_m_s2 * (dt_s / 2.0);
         }
         
-        t = t + dt;
-        results.push_back({t, x, v, a, atm});
+        t_s += dt_s;
+        results.push_back({t_s, current_alt_m, v_m_s, a_m_s2, atm_pa, rocket->get_mass_kg(), thrust_n, drag_n, q_pa, mach});
     }
 
     return results;
@@ -152,48 +91,89 @@ void LeapfrogIntegrator::plotTrajectory(const std::vector<State>& states, const 
     int n = states.size();
     if (n == 0) return;
 
-    std::vector<double> x(n);
-    std::vector<double> t(n);
-    std::vector<double> v(n);
-    std::vector<double> a(n);
-    std::vector<double> atm(n);
+    std::vector<double> time_s(n), alt_m(n), vel_m_s(n), acc_m_s2(n), press_pa(n);
+    std::vector<double> mass_kg(n), thrust_n(n), drag_n(n), q_pa(n), mach(n);
 
     for (int i = 0; i < n; ++i) {
-        t[i] = states[i].t;
-        x[i] = states[i].x;
-        v[i] = states[i].v;
-        a[i] = states[i].a;
-        atm[i] = states[i].atm_pressure;
+        time_s[i] = states[i].t_s;
+        alt_m[i]  = states[i].altitude_m;
+        vel_m_s[i] = states[i].velocity_m_s;
+        acc_m_s2[i] = states[i].acceleration_m_s2;
+        press_pa[i] = states[i].atm_pressure_pa;
+        mass_kg[i] = states[i].mass_kg;
+        thrust_n[i] = states[i].thrust_n;
+        drag_n[i] = states[i].drag_n;
+        q_pa[i] = states[i].dynamic_pressure_pa;
+        mach[i] = states[i].mach_number;
     }
 
-    TCanvas* c1 = new TCanvas("c1_leapfrog", "LVM3 Telemetry", 1200, 800);
-    c1->Divide(2, 2);
+    TCanvas* c1 = new TCanvas("c1_telemetry", "Vehicle Telemetry", 1600, 1200);
+    c1->Divide(3, 3);
 
     c1->cd(1);
-    TGraph* gr_x = new TGraph(n, t.data(), x.data());
-    gr_x->SetTitle("Altitude vs Time;Time (s);Altitude (m)");
-    gr_x->Draw("ALP");
+    TGraph* gr_alt = new TGraph(n, time_s.data(), alt_m.data());
+    gr_alt->SetTitle("Altitude vs Time;Time (s);Altitude (m)");
+    gr_alt->SetLineColor(kBlue);
+    gr_alt->Draw("ALP");
 
     c1->cd(2);
-    TGraph* gr_v = new TGraph(n, t.data(), v.data());
-    gr_v->SetTitle("Velocity vs Time;Time (s);Velocity (m/s)");
-    gr_v->Draw("ALP");
+    TGraph* gr_vel = new TGraph(n, time_s.data(), vel_m_s.data());
+    gr_vel->SetTitle("Velocity vs Time;Time (s);Velocity (m/s)");
+    gr_vel->SetLineColor(kRed);
+    gr_vel->Draw("ALP");
 
     c1->cd(3);
-    TGraph* gr_a = new TGraph(n, t.data(), a.data());
-    gr_a->SetTitle("Acceleration vs Time;Time (s);Acceleration (m/s^2)");
-    gr_a->Draw("ALP");
+    TGraph* gr_acc = new TGraph(n, time_s.data(), acc_m_s2.data());
+    gr_acc->SetTitle("Net Acceleration vs Time;Time (s);Acceleration (m/s^2)");
+    gr_acc->SetLineColor(kBlack);
+    gr_acc->Draw("ALP");
 
     c1->cd(4);
-    TGraph* gr_atm = new TGraph(n, t.data(), atm.data());
-    gr_atm->SetTitle("Ambient Pressure vs Time;Time (s);Pressure (Pa)");
-    gr_atm->Draw("ALP");
+    TGraph* gr_mass = new TGraph(n, time_s.data(), mass_kg.data());
+    gr_mass->SetTitle("Total Vehicle Mass vs Time;Time (s);Mass (kg)");
+    gr_mass->SetLineColor(kGreen+2);
+    gr_mass->Draw("ALP");
+
+    c1->cd(5);
+    TGraph* gr_thrust = new TGraph(n, time_s.data(), thrust_n.data());
+    gr_thrust->SetTitle("Engine Thrust vs Time;Time (s);Thrust (N)");
+    gr_thrust->SetLineColor(kOrange+7);
+    gr_thrust->Draw("ALP");
+
+    c1->cd(6);
+    TGraph* gr_drag = new TGraph(n, time_s.data(), drag_n.data());
+    gr_drag->SetTitle("Aerodynamic Drag vs Time;Time (s);Drag Force (N)");
+    gr_drag->SetLineColor(kMagenta);
+    gr_drag->Draw("ALP");
+
+    c1->cd(7);
+    TGraph* gr_q = new TGraph(n, time_s.data(), q_pa.data());
+    gr_q->SetTitle("Dynamic Pressure (q) vs Time;Time (s);Dynamic Pressure (Pa)");
+    gr_q->SetLineColor(kTeal);
+    gr_q->Draw("ALP");
+
+    c1->cd(8);
+    TGraph* gr_mach = new TGraph(n, time_s.data(), mach.data());
+    gr_mach->SetTitle("Mach Number vs Time;Time (s);Mach");
+    gr_mach->SetLineColor(kAzure+1);
+    gr_mach->Draw("ALP");
+
+    c1->cd(9);
+    TGraph* gr_press = new TGraph(n, time_s.data(), press_pa.data());
+    gr_press->SetTitle("Ambient Pressure vs Time;Time (s);Pressure (Pa)");
+    gr_press->SetLineColor(kGray+2);
+    gr_press->Draw("ALP");
 
     c1->Print(filename.c_str());
     
-    delete gr_x;
-    delete gr_v;
-    delete gr_a;
-    delete gr_atm;
+    delete gr_alt;
+    delete gr_vel;
+    delete gr_acc;
+    delete gr_mass;
+    delete gr_thrust;
+    delete gr_drag;
+    delete gr_q;
+    delete gr_mach;
+    delete gr_press;
     delete c1;
 }
