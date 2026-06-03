@@ -4,6 +4,12 @@
 #include <array>
 #include <algorithm>
 #include <iostream>
+#include <vector>
+
+#include "TVector3.h"
+#include "TGraph.h"
+#include "TCanvas.h"
+#include "TAxis.h"
 #include "schrodingerlib.hpp"
 
 /**
@@ -139,6 +145,86 @@ void get_lvm3_stage_properties(double altitude_m, double dt, double& current_mas
 
 
 
+
+void get_lvm3_stage_properties_3D(double current_time, double dt, double& current_mass,
+                                  double& mass_flow_rate, double& exit_velocity,
+                                  double& exit_pa, double& nozzle_exit_area,
+                                  bool& s200_jettisoned, bool& l110_jettisoned, bool& plf_jettisoned, 
+                                  double& prop_s200, double& prop_l110, double& prop_c25, bool& l110_ignited) 
+{
+    // Default: Engines Off / Coasting
+    mass_flow_rate = 0.0; exit_velocity = 0.0; exit_pa = 0.0; nozzle_exit_area = 0.0;
+
+    // --- STRUCTURAL JETTISON TIMELINES ---
+    // Payload Fairing Jettison (T+175s)
+    if (current_time >= 175.0 && !plf_jettisoned) {
+        current_mass -= 4000.0; // Drop ~4 Tonne PLF structural weight
+        plf_jettisoned = true;
+    }
+    // S200 Booster Structural Casings Jettison (T+133s)
+    if (current_time >= 133.0 && !s200_jettisoned) {
+        current_mass -= 62000.0; // Drop 2x 31t structural casings
+        s200_jettisoned = true;
+        prop_s200 = 0.0;
+    }
+    // L110 Core Stage Jettison (26s overlap started at T+110s -> runs for 200s -> T+310s)
+    if (current_time >= 310.0 && !l110_jettisoned) {
+        current_mass -= 35000.0; // Drop L110 Dry Structural Mass
+        l110_jettisoned = true;
+        prop_l110 = 0.0;
+    }
+    
+    // --- ACTIVE ENGINE TIMELINE LOGIC ---
+    
+    // 1. Dynamic Ignition Check: Core ignites at T+110s OR the moment S200 runs out of fuel
+    if (!l110_ignited && (current_time >= 110.0 || prop_s200 <= 0.0)) {
+        l110_ignited = true; 
+    }
+    
+    // Phase A: Pure S200 Booster Phase (L110 not yet ignited)
+    if (!l110_ignited && prop_s200 > 0.0) {
+        mass_flow_rate = 5460.0; // Combined 2x S200
+        exit_velocity = 2690.0; 
+        exit_pa = 60000.0; 
+        nozzle_exit_area = 11.2;
+        
+        prop_s200 -= mass_flow_rate * dt;
+    }
+    // Phase B: Co-ignition Overlap Phase (Both S200 and L110 are actively firing)
+    else if (l110_ignited && prop_s200 > 0.0 && prop_l110 > 0.0) {
+        double s200_flow = 5460.0;
+        double l110_flow = 571.4;
+        
+        mass_flow_rate = s200_flow + l110_flow;
+        // Mass-weighted average of exit velocities for accurate total thrust calculation
+        exit_velocity = ((s200_flow * 2690.0) + (l110_flow * 2873.0)) / mass_flow_rate;
+        
+        exit_pa = 52000.0; 
+        nozzle_exit_area = 12.86; // Combined nozzle reference area
+        
+        prop_s200 -= s200_flow * dt;
+        prop_l110 -= l110_flow * dt;
+    }
+    // Phase C: Pure L110 Vikas Engine Sustainer (S200 is empty or jettisoned, L110 still has fuel)
+    else if (l110_ignited && prop_s200 <= 0.0 && prop_l110 > 0.0) {
+        mass_flow_rate = 571.4; 
+        exit_velocity = 2873.0; 
+        exit_pa = 52000.0; 
+        nozzle_exit_area = 1.662;
+        
+        prop_l110 -= mass_flow_rate * dt;
+    }
+    // Phase D: C25 Cryogenic Upper Stage Burn (After L110 is entirely spent/jettisoned)
+    else if (l110_ignited && prop_l110 <= 0.0 && prop_c25 > 0.0 && current_time >= 312.0) {
+        mass_flow_rate = 44.5; 
+        exit_velocity = 4345.0; 
+        exit_pa = 5000.0; 
+        nozzle_exit_area = 2.45;
+        
+        prop_c25 -= mass_flow_rate * dt;
+    }
+}
+
 /**
  * @brief Calculates aerodynamic drag force acting on the LVM3.
  *
@@ -232,4 +318,76 @@ double get_lvm3_drag_force(double altitude_m,
     // ── 6. Drag equation: Fd = ½ · ρ · v² · Cd · A ───────────────────────────
     double drag_force = 0.5 * rho * (velocity_m_s * velocity_m_s) * Cd * frontal_area;
     return drag_force; // magnitude; caller negates along velocity direction
+}
+
+
+
+
+
+// Structure to hold our observation data points
+struct YawDataPoint {
+    double time_s;
+    double yaw_rad;
+};
+
+/**
+ * @brief Calculates the rocket's yaw angle in radians based on observational data using linear interpolation.
+ * @param current_time_s The current simulation time in seconds.
+ * @return The interpolated yaw angle in radians.
+ */
+double get_rocket_yaw_radians(double current_time_s) {
+    // Define the mathematical constant M_PI if not already available
+    const double PI = 3.14159265358979323846;
+
+    // Hardcoded observational data sorted by time
+    // Angles converted from fraction of pi/2 to absolute radians
+    static const std::vector<YawDataPoint> observations = {
+        {26.0, 0.12 * (PI / 2.0)},
+        {50.0, 0.28 * (PI / 2.0)},
+        {60.0, 0.47 * (PI / 2.0)},
+        {68.0, 0.75 * (PI / 2.0)},
+        {79.0, 1.10 * (PI / 2.0)},
+        {99.0, 1.53 * (PI / 2.0)}
+    };
+
+    // Edge Case 1: Time is before or at the first observation
+    if (current_time_s <= observations.front().time_s) {
+        return observations.front().yaw_rad;
+    }
+
+    // Edge Case 2: Time is after or at the last observation
+    if (current_time_s >= observations.back().time_s) {
+        return observations.back().yaw_rad;
+    }
+
+    // Find the first upper bound data point where observation.time_s > current_time_s
+    auto it = std::upper_bound(observations.begin(), observations.end(), current_time_s,
+        [](double time, const YawDataPoint& point) {
+            return time < point.time_s;
+        });
+
+    // 'p1' will be the point before current_time, 'p2' will be the point after
+    const YawDataPoint& p2 = *it;
+    const YawDataPoint& p1 = *(it - 1);
+
+    // Standard Linear Interpolation Formula:
+    // y = y1 + ((x - x1) / (x2 - x1)) * (y2 - y1)
+    double time_fraction = (current_time_s - p1.time_s) / (p2.time_s - p1.time_s);
+    double interpolated_yaw = p1.yaw_rad + time_fraction * (p2.yaw_rad - p1.yaw_rad);
+
+    return interpolated_yaw;
+}
+
+struct Components {
+    double x;
+    double y;
+    double z;
+};
+
+Components distro(double yaw_phi_rad, double yaw_lambda_rad, double phi_rad, double lambda_rad) {
+    // find components for forces, given the rocket angles
+    double x = cos(yaw_lambda_rad + lambda_rad);
+    double y = sin(yaw_lambda_rad + lambda_rad);
+    double z = sin(yaw_phi_rad + phi_rad);
+    return {x, y, z};
 }
