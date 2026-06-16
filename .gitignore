@@ -164,5 +164,11 @@ cython_debug/
 **/runme
 .env
 GEMINI.md
+PLAN.md
+PROGRESS.md
+WINDOWS_QUIRKS.md
 **/vcpkg_installed
 *.gif
+outputs/
+build_linux/
+build/

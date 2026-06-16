@@ -23,6 +23,7 @@ add_executable(runme
     integration/Rocket.cpp
     heat/HeatEquation.cpp
     audio/AudioProcessor.cpp
+    dipole/DipoleSimulation.cpp
 )
 
 target_include_directories(runme PRIVATE 
@@ -31,6 +32,7 @@ target_include_directories(runme PRIVATE
     integration
     heat
     audio
+    dipole
     ${ROOT_INCLUDE_DIRS}
 )
 

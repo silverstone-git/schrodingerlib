@@ -2,10 +2,27 @@
 #include "integration/Leapfrog.h"
 #include "heat/HeatEquation.h"
 #include "audio/AudioProcessor.h"
+#include "dipole/DipoleSimulation.h"
 #include <iostream>
 #include <vector>
 #include <string>
 #include <iomanip>
+#include <filesystem>
+#include <algorithm>
+
+std::string get_output_path(const std::string& filename) {
+    std::filesystem::create_directories("./outputs");
+    std::filesystem::path p(filename);
+    if (p.is_absolute()) {
+        return filename;
+    }
+    std::string norm = p.lexically_normal().string();
+    std::replace(norm.begin(), norm.end(), '\\', '/');
+    if (norm.rfind("outputs/", 0) == 0 || norm.rfind("./outputs/", 0) == 0) {
+        return filename;
+    }
+    return "outputs/" + filename;
+}
 
 void show_menu() {
     std::cout << "\n--- Numerical Analysis CLI ---" << std::endl;
@@ -14,6 +31,7 @@ void show_menu() {
     std::cout << "3. Heat Equation (3D Solution)" << std::endl;
     std::cout << "4. Audio FFT Filtering" << std::endl;
     std::cout << "5. Rocket Leapfrog Simulation (LVM3)" << std::endl;
+    std::cout << "6. Electrostatic Dipole & CIC Simulation" << std::endl;
     std::cout << "0. Exit" << std::endl;
     std::cout << "Select an option: ";
 }
@@ -42,8 +60,9 @@ void handle_heat1d() {
     std::string out_file;
     std::cout << "Enter alpha (m^2/s), number of frames, and output file (e.g. 0.5 30 heat1d.gif): ";
     std::cin >> alpha_m2_s >> num_frames >> out_file;
-    HeatEquation::generate1DGIF(alpha_m2_s, num_frames, out_file);
-    std::cout << "1D Heat Equation GIF generated: " << out_file << std::endl;
+    std::string out_path = get_output_path(out_file);
+    HeatEquation::generate1DGIF(alpha_m2_s, num_frames, out_path);
+    std::cout << "1D Heat Equation GIF generated: " << out_path << std::endl;
 }
 
 void handle_heat3d() {
@@ -52,8 +71,9 @@ void handle_heat3d() {
     std::string out_file;
     std::cout << "Enter alpha (m^2/s), number of frames, and output file (e.g. 0.5 400 heat3d.gif): ";
     std::cin >> alpha_m2_s >> num_frames >> out_file;
-    HeatEquation::generate3DGIF(alpha_m2_s, num_frames, out_file);
-    std::cout << "3D Heat Equation GIF generated: " << out_file << std::endl;
+    std::string out_path = get_output_path(out_file);
+    HeatEquation::generate3DGIF(alpha_m2_s, num_frames, out_path);
+    std::cout << "3D Heat Equation GIF generated: " << out_path << std::endl;
 }
 
 void handle_audio() {
@@ -74,8 +94,9 @@ void handle_audio() {
     }
 
     std::vector<double> filtered_pcm = AudioProcessor::filter(pcm_samples, sample_rate_hz, lo_hz, hi_hz);
-    AudioProcessor::writeWav(output_wav, filtered_pcm, sample_rate_hz);
-    std::cout << "Filtered audio saved to " << output_wav << std::endl;
+    std::string out_path = get_output_path(output_wav);
+    AudioProcessor::writeWav(out_path, filtered_pcm, sample_rate_hz);
+    std::cout << "Filtered audio saved to " << out_path << std::endl;
 }
 
 void handle_leapfrog() {
@@ -94,8 +115,13 @@ void handle_leapfrog() {
     // Simulate from ground level with 0 initial velocity
     auto trajectory_states = integrator.simulate(t_max_s, 0.0, 0.0);
 
-    LeapfrogIntegrator::plotTrajectory(trajectory_states, out_file);
-    std::cout << "Trajectory plotted and saved to " << out_file << std::endl;
+    std::string out_path = get_output_path(out_file);
+    LeapfrogIntegrator::plotTrajectory(trajectory_states, out_path);
+    std::cout << "Trajectory plotted and saved to " << out_path << std::endl;
+}
+
+void handle_dipole() {
+    DipoleSimulation::runSimulation();
 }
 
 int main() {
@@ -109,6 +135,7 @@ int main() {
             case 3: handle_heat3d(); break;
             case 4: handle_audio(); break;
             case 5: handle_leapfrog(); break;
+            case 6: handle_dipole(); break;
             case 0: std::cout << "Exiting..." << std::endl; break;
             default: std::cout << "Invalid choice!" << std::endl;
         }
