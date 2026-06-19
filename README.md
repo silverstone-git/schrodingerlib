@@ -14,6 +14,8 @@ A high-fidelity trajectory integrator utilizing the **Leapfrog (Midpoint) Method
 *   **Aerodynamics**: Features a Mach-dependent $C_d$ drag model, accounting for the transonic wave-drag peak and dynamic reference area changes.
 *   **Telemetry**: Generates a professional 3x3 telemetry grid (PDF) visualizing 9 synchronized parameters including **Max-Q (Dynamic Pressure)** and Mach transitions.
 
+![ISRO LVM3 Flight Sims](images/lvm3_flight_params.png)
+
 ### 2. Signal Processing (FFT Toolkit)
 A robust frequency-domain filtering module for PCM audio data.
 *   **Algorithm**: Utilizes the **Cooley-Tukey FFT** (implemented via ROOT's `TVirtualFFT`) to perform forward and inverse transforms.
@@ -32,6 +34,8 @@ A high-fidelity electrostatic plasma and particle tracking simulation.
 *   **Poisson Solver**: Solves $\nabla^2 \phi = -\rho / \epsilon_0$ in Fourier space using 3D Spectral FFT transforms via `TVirtualFFT`.
 *   **Integrator**: Simulates test particle trajectories in the computed 3D dipole electric fields using a symplectic **Leapfrog Integrator** with perfect elastic boundary collisions.
 *   **Diagnostics**: Custom signal processing tools computing power spectral density (PSD) of particle speed via **Welch's Method** and mapping crossings of the $Y=30$ plane via a **Poincaré Section**.
+
+![Dipole Simulation](images/dipole.png)
 
 ---
 
